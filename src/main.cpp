@@ -22,7 +22,6 @@ struct FastAnalysisPlugin final : plugmod_t {
     inline static FastAnalysisPlugin* SINGLETON{};
 
     FastAnalysisPlugin() {
-        bool is_arm = false;
         auto proc_name = inf_get_procname();
 
         if (proc_name == "metapc") {
@@ -37,7 +36,7 @@ struct FastAnalysisPlugin final : plugmod_t {
             }
         } else if (proc_name == "ARM") {
             // the function we need to hook for ARM is just in ida.dll, weirdly enough
-            is_arm = true;
+            m_is_arm = true;
         } else {
             msg("FastAnalysis is not supported for this target: %s\n", proc_name.c_str());
             return;
@@ -56,7 +55,7 @@ struct FastAnalysisPlugin final : plugmod_t {
         }
 
         bool result;
-        if (is_arm)
+        if (m_is_arm)
             result = init_arm();
         else
             result = init_metapc();
@@ -279,6 +278,7 @@ struct FastAnalysisPlugin final : plugmod_t {
 
     bool m_active = false;
     bool m_scanned_for_refs = false;
+    bool m_is_arm = false;
 
 #ifdef HOOK_XREFBLK
     std::array<void*, 2> m_handle_operand_ret_addrs{};
@@ -340,7 +340,7 @@ struct FastAnalysisPlugin final : plugmod_t {
         if (flags == XREF_DATA && std::ranges::contains(plugin->m_handle_operand_ret_addrs, return_address))
         {
             if (!plugin->m_scanned_for_refs) {
-                plugin->scan_for_refs(false);
+                plugin->scan_for_refs(plugin->m_is_arm);
             }
 
             if (!plugin->m_write_drefs_to.contains(to)) {

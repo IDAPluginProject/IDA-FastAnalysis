@@ -201,8 +201,9 @@ struct FastAnalysisPlugin final : plugmod_t {
         auto end_time = std::chrono::high_resolution_clock::now();
         msg("FastAnalysis: Took %d ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count());
 
-        //assert(res == binary_size);
-
+#ifdef ASSERTS
+        assert(res == binary_size);
+#endif
         start_ea = segment->start_ea;
 
         return true;
@@ -221,7 +222,18 @@ struct FastAnalysisPlugin final : plugmod_t {
         return true;
     }
 
-    void scan_for_refs(bool is_arm) {
+    void test_multi() {
+        scan_for_refs(m_is_arm);
+        auto multi_count = m_write_drefs_to.size();
+        m_write_drefs_to.clear();
+        m_scanned_for_refs = false;
+        scan_for_refs(m_is_arm, 1);
+        auto single_count = m_write_drefs_to.size();
+
+        assert(multi_count >= single_count);
+    }
+
+    void scan_for_refs(bool is_arm, uint32_t num_threads = std::max(1u, std::thread::hardware_concurrency() - 1)) {
         if (m_scanned_for_refs)
             return;
 
@@ -233,7 +245,6 @@ struct FastAnalysisPlugin final : plugmod_t {
 
         size_t section_size = m_target_text_section_bytes.size();
 
-        uint32_t num_threads = std::thread::hardware_concurrency();
         size_t size_per_division = section_size / num_threads;
 
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -245,16 +256,49 @@ struct FastAnalysisPlugin final : plugmod_t {
         for (int i = 0; i < num_threads; i++) {
             const std::byte* division_end = division_begin + size_per_division;
 
-            if (i != num_threads - 1) {
-                // make sure we aren't cutting into the middle of an instruction
-                ea_t original_ea = division_end - m_target_text_section_bytes.data() + m_text_start_ea;
-                ea_t n = next_not_tail(original_ea);
-                division_end += n - original_ea;
+            // make sure we aren't cutting into the middle of an instruction
+            if (is_arm) {
+                division_end = reinterpret_cast<const std::byte*>(reinterpret_cast<uintptr_t>(division_end) + 3 & ~3ULL);
+            } else {
+                if (i != num_threads - 1) {
+                    ea_t original_ea = division_end - m_target_text_section_bytes.data() + m_text_start_ea;
+                    ea_t cur_ea = original_ea;
+                    insn_t ins = {};
+                    while (cur_ea < m_text_start_ea + section_size) {
+                        int len = decode_insn(&ins, cur_ea);
+                        if (len == 0) {
+                            cur_ea++;
+                        } else {
+                            cur_ea += len;
+                            break;
+                        }
+                    }
+                    division_end += cur_ea - original_ea;
+                }
             }
+
+            if (i == num_threads - 1) {
+                division_end = std::min(division_end, static_cast<const std::byte*>(m_target_text_section_bytes.data() + section_size));
+            }
+
+            const std::byte* scan_begin = division_begin, *scan_end = division_end;
+            if (is_arm) {
+                constexpr size_t overlap = 0x100;
+                scan_begin =
+                    (i == 0) ? scan_begin : scan_begin - overlap;
+
+                scan_end =
+                    (i == num_threads - 1) ? scan_end : scan_end + overlap;
+            }
+
+#ifdef ASSERTS
+            assert(division_begin >= m_target_text_section_bytes.data());
+            assert(division_end <= m_target_text_section_bytes.data() + section_size);
+#endif
 
             threads.emplace_back(std::async(std::launch::async, [=, text_start = m_text_start_ea] {
                 return RefScanner::find_write_drefs(is_arm ? RefScanner::AARCH64 : RefScanner::X86_64, text_start + i * size_per_division,
-                    division_begin, division_end);
+                    scan_begin, scan_end);
             }));
 
             division_begin = division_end;
@@ -341,6 +385,9 @@ struct FastAnalysisPlugin final : plugmod_t {
         {
             if (!plugin->m_scanned_for_refs) {
                 plugin->scan_for_refs(plugin->m_is_arm);
+#ifdef ASSERTS
+                plugin->test_multi();
+#endif
             }
 
             if (!plugin->m_write_drefs_to.contains(to)) {

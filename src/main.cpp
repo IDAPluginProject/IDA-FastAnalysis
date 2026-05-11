@@ -1,11 +1,4 @@
-
 #include <chrono>
-#ifdef __linux__
-#include <dlfcn.h>
-#elifdef WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#endif
 #include <filesystem>
 #include <future>
 #include <safetyhook.hpp>
@@ -17,61 +10,56 @@
 #include <ida.hpp>
 #include <idp.hpp>
 #include <loader.hpp>
+#include <diskio.hpp>
+
+// platform and IDA version-specific info, includes sigs
+#include "module_details.h"
+
+// IDA's closed source processor for x86_64
+struct pc_t : procmod_t {};
 
 struct FastAnalysisPlugin final : plugmod_t {
     inline static FastAnalysisPlugin* SINGLETON{};
 
     FastAnalysisPlugin() {
         bool is_arm = false;
+        auto proc_name = inf_get_procname();
 
-        if (inf_get_procname() == "metapc") {
-#ifdef WIN32
-#ifdef IDA_8
-            m_proc_mod = hat::process::get_module("pc64.dll");
-#else
-            m_proc_mod = hat::process::get_module("pc.dll");
-#endif
-#elifdef __linux__
-            m_proc_mod = hat::process::get_module("pc.so");
-#endif
-        } else if (inf_get_procname() == "ARM") {
-            is_arm = true;
+        if (proc_name == "metapc") {
+            auto pc_path = get_proc_file_path(pc_mod_name);
 
+            if (!pc_path.empty())
+                m_proc_mod = hat::process::get_module(pc_path);
+
+            if (!m_proc_mod) {
+                msg("FastAnalysis failed to initialize: couldn't load proc module\n");
+                return;
+            }
+        } else if (proc_name == "ARM") {
             // the function we need to hook for ARM is just in ida.dll, weirdly enough
-#ifndef IDA_8
-            m_proc_mod = hat::process::get_module("ida.dll");
-#endif
-        }
-
-#ifdef WIN32
-#ifndef IDA_8
-        m_ida_mod = hat::process::get_module("ida.dll");
-#else
-        m_ida_mod = hat::process::get_module("ida64.dll");
-#endif
-#elifdef __linux__
-        m_ida_mod = hat::process::get_module("ida.so");
-#endif
-
-        if (!m_proc_mod || !m_ida_mod) {
-            msg("FastAnalysis is not supported for this target: %s\n", inf_get_procname().c_str());
+            is_arm = true;
+        } else {
+            msg("FastAnalysis is not supported for this target: %s\n", proc_name.c_str());
             return;
         }
 
-        m_proc_mod->for_each_segment([this](std::span<std::byte> section, hat::protection protection) {
-           if (static_cast<bool>(protection & hat::protection::Execute)) {
-               m_proc_mod_text_section = section;
-               return false;
-           }
+        m_ida_mod = hat::process::get_module(ida_mod_name);
 
-           return true;
-        });
+        if (!m_ida_mod || !extract_executable_section(*m_ida_mod, m_ida_mod_text_section)) {
+            msg("FastAnalysis failed to initialize: couldn't load main ida module\n");
+            return;
+        }
+
+        if (m_proc_mod && !extract_executable_section(*m_proc_mod, m_proc_mod_text_section)) {
+            msg("FastAnalysis failed to initialize: couldn't load proc module\n");
+            return;
+        }
 
         bool result;
         if (is_arm)
-            result = init_arm_hooks();
+            result = init_arm();
         else
-            result = init_metapc_hooks();
+            result = init_metapc();
 
         if (result)
             m_active = true;
@@ -90,10 +78,37 @@ struct FastAnalysisPlugin final : plugmod_t {
         return true;
     }
 
-    bool init_arm_hooks() {
-        auto pattern = hat::compile_signature<"48 83 ec ? 48 8b 05 ? ? ? ? 48 33 c4 48 89 44 24 38 48 8b d1 41 b8 02">();
+    static std::string get_proc_file_path(hat::cstring_view filename) {
+        char path[QMAXPATH] = {};
 
-        hat::scan_result result = hat::find_pattern(m_proc_mod_text_section, pattern,
+        if (getsysfile(path, sizeof(path), filename.c_str(), "procs"))
+            return path;
+
+        return "";
+    }
+
+    // get largest executable section
+    static bool extract_executable_section(const hat::process::module& mod, std::span<std::byte>& span) {
+        size_t last_section_size = 0;
+
+        mod.for_each_segment([&](std::span<std::byte> section, hat::protection protection) {
+           if (static_cast<bool>(protection & hat::protection::Execute)) {
+                if (section.size() > last_section_size) {
+                    span = section;
+                    last_section_size = section.size();
+                }
+           }
+
+            return true;
+        });
+
+        return last_section_size > 0;
+    }
+
+    bool init_arm() {
+        auto pattern = hat::compile_signature<arm_hook_sig>();
+
+        hat::scan_result result = hat::find_pattern(m_ida_mod_text_section, pattern,
             hat::scan_alignment::X16, hat::scan_hint::x86_64);
 
         if (!result.has_result()) {
@@ -113,35 +128,35 @@ struct FastAnalysisPlugin final : plugmod_t {
         return true;
     }
 
-    bool init_metapc_hooks() {
-        auto pattern = hat::compile_signature<
-#ifdef WIN32
-#ifdef IDA_8
-       "40 53 48 83 EC ? 48 8b 05 ? ? ? ? 48 33 C4 48 89 44 24 38"
-#else
-       "48 83 ec ? 48 8b 05 ? ? ? ? 48 33 c4 48 89 44 24 38 41 b8 02 00 00 00"
-#endif
-#elifdef __linux__
-#error Linux is not supported
+    bool init_metapc() {
+#ifdef HOOK_XREFBLK
+        m_handle_operand_ret_addrs[0] = hat::find_pattern(m_proc_mod_text_section,
+            hat::compile_signature<metapc_handle_op_ret_addr_1>()).get();
 
-        // Looks like it might be this
-        "55 53 48 83 ec ? 64 48 8b 14 25 ? 00 00 00 48 89 54 ? ? ba 02"
-#endif
-        >();
+        m_handle_operand_ret_addrs[1] = hat::find_pattern(m_proc_mod_text_section,
+            hat::compile_signature<metapc_handle_op_ret_addr_2>()).get();
+
+        if (std::ranges::contains(m_handle_operand_ret_addrs, nullptr)) {
+            warning("FastAnalysis may not support this IDA version (signature dead)");
+            return false;
+        }
+
+        m_metapc_hook = safetyhook::create_inline(xrefblk_t_first_to, xrefblk_t_first_to_hook);
+#else
+        auto pattern = hat::compile_signature<metapc_hook_sig>();
 
         hat::scan_result result = hat::find_pattern(m_proc_mod_text_section, pattern,
             hat::scan_alignment::X16, hat::scan_hint::x86_64);
 
         if (!result.has_result()) {
-            warning("FastAnalysis may not support this IDA version (signature result not found)\n");
+            warning("FastAnalysis may not support this IDA version (signature dead)");
             return false;
         }
 
-        m_metapc_has_write_dref_hook = safetyhook::create_inline(result.get(), metapc_has_write_dref_hook);
+        m_metapc_hook = safetyhook::create_inline(result.get(), metapc_has_write_dref_hook);
+#endif
 
-        auto enable_result = m_metapc_has_write_dref_hook.enable();
-
-        if (!enable_result.has_value()) {
+        if (auto enable_result = m_metapc_hook.enable(); !enable_result.has_value()) {
             warning("Failed to enable hook, FastAnalysis will not function");
             return false;
         }
@@ -193,13 +208,11 @@ struct FastAnalysisPlugin final : plugmod_t {
         if (m_scanned_for_refs)
             return;
 
-
         if (!get_target_sections_bytes()) {
             msg("FastAnalysis: Failed to get target text section bytes\n");
             m_active = false;
             return;
         }
-
 
         size_t section_size = m_target_text_section_bytes.size();
 
@@ -210,10 +223,10 @@ struct FastAnalysisPlugin final : plugmod_t {
 
         std::vector<std::future<std::unordered_set<uintptr_t>>> threads;
 
-        std::byte* division_begin = m_target_text_section_bytes.data();
+        const std::byte* division_begin = m_target_text_section_bytes.data();
 
         for (int i = 0; i < num_threads; i++) {
-            std::byte* division_end = division_begin + size_per_division;
+            const std::byte* division_end = division_begin + size_per_division;
 
             if (i != num_threads - 1) {
                 // make sure we aren't cutting into the middle of an instruction
@@ -249,7 +262,11 @@ struct FastAnalysisPlugin final : plugmod_t {
     bool m_active = false;
     bool m_scanned_for_refs = false;
 
-    safetyhook::InlineHook m_metapc_has_write_dref_hook{};
+#ifdef HOOK_XREFBLK
+    std::array<void*, 2> m_handle_operand_ret_addrs{};
+#endif
+
+    safetyhook::InlineHook m_metapc_hook{};
     safetyhook::InlineHook m_arm_has_write_dref_hook{};
     std::optional<hat::process::module> m_proc_mod;
     std::optional<hat::process::module> m_ida_mod;
@@ -261,11 +278,11 @@ struct FastAnalysisPlugin final : plugmod_t {
     ea_t m_text_start_ea{};
 
     // Checks if there's a write data xref to the target address
-    // This is probably called by some reg_finder_t function
-    static bool metapc_has_write_dref_hook(void* unknown, ea_t target_addr) {
+    // where to find this: pc.dll/.so, pc_t vtable -> pc_t::on_event, case ev_emu_insn -> pc_t::emu -> handle_operand
+    static bool metapc_has_write_dref_hook(pc_t* proc, ea_t target_addr) {
         auto plugin = SINGLETON;
         if (!plugin->m_active) {
-            return plugin->m_metapc_has_write_dref_hook.call<bool>(unknown, target_addr);
+            return plugin->m_metapc_hook.call<bool>(proc, target_addr);
         }
 
         if (!plugin->m_scanned_for_refs) {
@@ -275,6 +292,36 @@ struct FastAnalysisPlugin final : plugmod_t {
         return plugin->m_write_drefs_to.contains(target_addr);
     }
 
+    // (linux only)
+    // The above function is inlined on pc.so, so we instead hook this and check return address
+#ifdef HOOK_XREFBLK
+    static bool xrefblk_t_first_to_hook(xrefblk_t* this_, ea_t to, int flags) {
+        auto plugin = SINGLETON;
+        if (!plugin->m_active) {
+            return plugin->m_metapc_hook.call<bool>(this_, to, flags);
+        }
+
+        void* return_address = __builtin_return_address(0);
+
+        if (flags == XREF_DATA && std::ranges::contains(plugin->m_handle_operand_ret_addrs, return_address))
+        {
+            if (!plugin->m_scanned_for_refs) {
+                plugin->scan_for_refs(false);
+            }
+
+            if (!plugin->m_write_drefs_to.contains(this_->to)) {
+                return false;
+            }
+
+            // break the loop
+            this_->type = dr_W;
+            return true;
+        }
+        return plugin->m_metapc_hook.call<bool>(this_, to, flags);
+    }
+#endif
+
+    // generic function in ida.dll, probably doesn't only apply to arm but we use it as such
     static bool arm_has_write_dref_hook(ea_t target_addr) {
         auto plugin = SINGLETON;
         if (!plugin->m_active) {
@@ -295,7 +342,7 @@ plugmod_t* idaapi init() {
 
 plugin_t PLUGIN = {
     IDP_INTERFACE_VERSION,
-    PLUGIN_MULTI,
+    PLUGIN_PROC,
     init,
     nullptr,
     nullptr,

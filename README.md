@@ -1,6 +1,6 @@
 # IDA-FastAnalysis
 
-A (WIP) IDA **9.x, 8.x** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
+A (WIP) IDA **9.2+, 8.x** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
 
 Below represents where optimizations by IDA-FastAnalysis can currently be applied:
 
@@ -11,7 +11,7 @@ Below represents where optimizations by IDA-FastAnalysis can currently be applie
 | 8.x         | x64               |
 
 ## TODO
-- [ ] Support for Linux versions of IDA
+- [x] Support for Linux versions of IDA
 - [ ] "Sanity check" to ensure disassembly isn't affected
 - [ ] Designate a test binary for benchmarks
 
@@ -30,7 +30,7 @@ bool has_write_dref(ea_t target_addr) {
     xrefblk_t xb{};
     
     // Finds the first cross reference to target_addr
-    if (!xb.first_to(target_addr, XREF_FLOW))
+    if (!xb.first_to(target_addr, XREF_DATA))
         return false;
     
     // Keeps scanning until a DATA xref is found

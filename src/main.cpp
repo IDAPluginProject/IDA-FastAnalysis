@@ -309,7 +309,7 @@ struct FastAnalysisPlugin final : plugmod_t {
                 plugin->scan_for_refs(false);
             }
 
-            if (!plugin->m_write_drefs_to.contains(this_->to)) {
+            if (!plugin->m_write_drefs_to.contains(to)) {
                 return false;
             }
 

@@ -106,6 +106,21 @@ struct FastAnalysisPlugin final : plugmod_t {
     }
 
     bool init_arm() {
+#ifdef HOOK_XREFBLK
+        m_handle_operand_ret_addrs[0] = hat::find_pattern(m_ida_mod_text_section,
+            hat::compile_signature<arm_handle_op_ret_addr_1>()).get();
+
+        m_handle_operand_ret_addrs[1] = hat::find_pattern(m_ida_mod_text_section,
+            hat::compile_signature<arm_handle_op_ret_addr_2>()).get();
+
+        if (std::ranges::contains(m_handle_operand_ret_addrs, nullptr)) {
+            warning("FastAnalysis may not support this IDA version (signature dead)");
+            return false;
+        }
+
+        m_xrefblk_hook = safetyhook::create_inline(xrefblk_t_first_to, xrefblk_t_first_to_hook);
+        auto enable_result = m_xrefblk_hook.enable();
+#else
         auto pattern = hat::compile_signature<arm_hook_sig>();
 
         hat::scan_result result = hat::find_pattern(m_ida_mod_text_section, pattern,
@@ -118,8 +133,9 @@ struct FastAnalysisPlugin final : plugmod_t {
 
         m_arm_has_write_dref_hook = safetyhook::create_inline(result.get(), arm_has_write_dref_hook);
 
-        auto enable_result = m_arm_has_write_dref_hook.enable();
 
+        auto enable_result = m_arm_has_write_dref_hook.enable();
+#endif
         if (!enable_result.has_value()) {
             warning("Failed to enable hook, FastAnalysis will not function");
             return false;
@@ -141,7 +157,8 @@ struct FastAnalysisPlugin final : plugmod_t {
             return false;
         }
 
-        m_metapc_hook = safetyhook::create_inline(xrefblk_t_first_to, xrefblk_t_first_to_hook);
+        m_xrefblk_hook = safetyhook::create_inline(xrefblk_t_first_to, xrefblk_t_first_to_hook);
+        auto enable_result = m_xrefblk_hook.enable();
 #else
         auto pattern = hat::compile_signature<metapc_hook_sig>();
 
@@ -154,9 +171,10 @@ struct FastAnalysisPlugin final : plugmod_t {
         }
 
         m_metapc_hook = safetyhook::create_inline(result.get(), metapc_has_write_dref_hook);
+        auto enable_result = m_metapc_hook.enable();
 #endif
 
-        if (auto enable_result = m_metapc_hook.enable(); !enable_result.has_value()) {
+        if (!enable_result.has_value()) {
             warning("Failed to enable hook, FastAnalysis will not function");
             return false;
         }
@@ -264,6 +282,7 @@ struct FastAnalysisPlugin final : plugmod_t {
 
 #ifdef HOOK_XREFBLK
     std::array<void*, 2> m_handle_operand_ret_addrs{};
+    safetyhook::InlineHook m_xrefblk_hook{};
 #endif
 
     safetyhook::InlineHook m_metapc_hook{};
@@ -292,13 +311,28 @@ struct FastAnalysisPlugin final : plugmod_t {
         return plugin->m_write_drefs_to.contains(target_addr);
     }
 
+    // generic function in ida.dll, probably doesn't only apply to arm but we use it as such
+    // called twice in reg_finder_emulate_mem_read
+    static bool arm_has_write_dref_hook(ea_t target_addr) {
+        auto plugin = SINGLETON;
+        if (!plugin->m_active) {
+            return plugin->m_arm_has_write_dref_hook.call<bool>(target_addr);
+        }
+
+        if (!plugin->m_scanned_for_refs) {
+            plugin->scan_for_refs(true);
+        }
+
+        return plugin->m_write_drefs_to.contains(target_addr);
+    }
+
     // (linux only)
-    // The above function is inlined on pc.so, so we instead hook this and check return address
+    // The above functions are inlined on pc.so, so we instead hook this and check return address
 #ifdef HOOK_XREFBLK
     static bool xrefblk_t_first_to_hook(xrefblk_t* this_, ea_t to, int flags) {
         auto plugin = SINGLETON;
         if (!plugin->m_active) {
-            return plugin->m_metapc_hook.call<bool>(this_, to, flags);
+            return plugin->m_xrefblk_hook.call<bool>(this_, to, flags);
         }
 
         void* return_address = __builtin_return_address(0);
@@ -317,23 +351,9 @@ struct FastAnalysisPlugin final : plugmod_t {
             this_->type = dr_W;
             return true;
         }
-        return plugin->m_metapc_hook.call<bool>(this_, to, flags);
+        return plugin->m_xrefblk_hook.call<bool>(this_, to, flags);
     }
 #endif
-
-    // generic function in ida.dll, probably doesn't only apply to arm but we use it as such
-    static bool arm_has_write_dref_hook(ea_t target_addr) {
-        auto plugin = SINGLETON;
-        if (!plugin->m_active) {
-            return plugin->m_arm_has_write_dref_hook.call<bool>(target_addr);
-        }
-
-        if (!plugin->m_scanned_for_refs) {
-            plugin->scan_for_refs(true);
-        }
-
-        return plugin->m_write_drefs_to.contains(target_addr);
-    }
 };
 
 plugmod_t* idaapi init() {

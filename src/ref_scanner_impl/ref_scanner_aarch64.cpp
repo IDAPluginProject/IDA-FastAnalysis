@@ -70,6 +70,7 @@ static std::tuple<uint32_t, uint32_t, int64_t> decode_str(uint32_t insn) {
 std::unordered_set<uintptr_t> RefScanner_aarch64::find_write_drefs(uintptr_t virtual_base_addr, const std::byte* begin, const std::byte* end) {
     // step 1: find next ADRP instruction
     // step 2: find the next instruction that adds page offset and does a store operation
+    // todo: This doesn't work very well right now, it has a LOT of misses compared to x64
 
     std::unordered_set<uintptr_t> refs;
 

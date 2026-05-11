@@ -33,13 +33,21 @@ inline static constexpr hat::fixed_string
 
 #define HOOK_XREFBLK CONFIG_SWITCH(false, false, true)
 
-// linux, currently 9.2 only: point to the instruction after calls to xrefblk_t_first_to in pc.so's handle_operand
+// linux, currently 9.2(+?) only: point to the instruction after calls to xrefblk_t_first_to in pc.so's handle_operand
 
 inline static constexpr hat::fixed_string
     metapc_handle_op_ret_addr_1 = "84 c0 75 ? e9 ? ? ? ? 0f 1f 44 00";
 
 inline static constexpr hat::fixed_string
     metapc_handle_op_ret_addr_2 = "84 c0 74 ? 66 0f 1f 84 00 ? ? ? ? 80 7c 24";
+
+// arm stuff: same as above but found in libida.so reg_finder_emulate_mem_read
+
+inline static constexpr hat::fixed_string
+    arm_handle_op_ret_addr_1 = "eb ? 90 80 bc 24 ? ? ? ? ? 0f 84";
+
+inline static constexpr hat::fixed_string
+    arm_handle_op_ret_addr_2 = "eb ? 66 90 80 bc 24 ? ? ? ? ? 74";
 
 
 

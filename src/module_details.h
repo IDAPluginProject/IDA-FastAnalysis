@@ -31,7 +31,9 @@ inline static constexpr hat::fixed_string
 inline static constexpr hat::fixed_string
     arm_hook_sig = "48 83 ec ? 48 8b 05 ? ? ? ? 48 33 c4 48 89 44 24 38 48 8b d1 41 b8 02";
 
-#define HOOK_XREFBLK CONFIG_SWITCH(false, false, true)
+#ifdef __linux__
+#define HOOK_XREFBLK
+#endif
 
 // linux, currently 9.2(+?) only: point to the instruction after calls to xrefblk_t_first_to in pc.so's handle_operand
 

@@ -409,7 +409,7 @@ plugmod_t* idaapi init() {
 
 plugin_t PLUGIN = {
     IDP_INTERFACE_VERSION,
-    PLUGIN_PROC,
+    PLUGIN_PROC | PLUGIN_MULTI, // todo: this plugin is NOT actually multi but this is the only i can get it to load (and not unload) when it should
     init,
     nullptr,
     nullptr,

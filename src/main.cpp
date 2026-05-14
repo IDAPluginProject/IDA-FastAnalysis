@@ -18,7 +18,7 @@
 // IDA's closed source processor for x86_64
 struct pc_t : procmod_t {};
 
-struct FastAnalysisPlugin final : plugmod_t {
+struct FastAnalysisPlugin final {
     inline static FastAnalysisPlugin* SINGLETON{};
 
     FastAnalysisPlugin() {
@@ -64,9 +64,9 @@ struct FastAnalysisPlugin final : plugmod_t {
             m_active = true;
     }
 
-    ~FastAnalysisPlugin() override = default;
+    ~FastAnalysisPlugin() = default;
 
-    bool run(size_t arg) override {
+    bool run(size_t arg) {
         // TODO: settings menu
 
         if (m_active)
@@ -404,15 +404,30 @@ struct FastAnalysisPlugin final : plugmod_t {
 };
 
 plugmod_t* idaapi init() {
-    return FastAnalysisPlugin::SINGLETON = new FastAnalysisPlugin;
+    FastAnalysisPlugin::SINGLETON = new FastAnalysisPlugin;
+    return PLUGIN_KEEP;
 }
 
+void idaapi term() {
+    delete FastAnalysisPlugin::SINGLETON;
+    FastAnalysisPlugin::SINGLETON = nullptr;
+}
+
+bool idaapi run(size_t arg) {
+#ifdef ASSERTS
+    assert(FastAnalysisPlugin::SINGLETON != nullptr);
+#endif
+    return FastAnalysisPlugin::SINGLETON->run(arg);
+}
+
+// PLUGIN_MULTI is not currently possible in this plugin's case
+// there's no good way to tell which database is currently active from the hooks, so no multi db support
 plugin_t PLUGIN = {
     IDP_INTERFACE_VERSION,
-    PLUGIN_PROC | PLUGIN_MULTI, // todo: this plugin is NOT actually multi but this is the only i can get it to load (and not unload) when it should
+    PLUGIN_PROC,
     init,
-    nullptr,
-    nullptr,
+    term,
+    run,
     "Speeds up IDA Auto-Analysis",
     nullptr,
     "FastAnalysis",

@@ -32,8 +32,6 @@ list(APPEND fastanalysis_sources
         src/ref_scanner_impl/ref_scanner_aarch64.cpp
         src/ref_scanner_impl/ref_scanner_x86_64.cpp
         src/ref_scanner.cpp
-        src/hde/hde64.c
-        src/hde/hde32.c
 )
 
 add_library(fastanalysis SHARED
@@ -52,6 +50,7 @@ target_compile_definitions(fastanalysis PRIVATE
 target_link_libraries(fastanalysis PRIVATE
         safetyhook
         libhat
+        Zydis
 )
 
 

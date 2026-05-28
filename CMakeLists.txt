@@ -72,6 +72,7 @@ if(DEFINED ENV{IDA_8_SDK})
     target_link_libraries(ida_8_fastanalysis64 PRIVATE
             safetyhook
             libhat
+            zydis
     )
 
     target_compile_definitions(ida_8_fastanalysis64 PRIVATE

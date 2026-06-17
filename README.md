@@ -1,14 +1,17 @@
 # IDA-FastAnalysis
 
-A (WIP) IDA **9.2+, 8.x** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
+A (WIP) IDA **9.2-9.3, 8.3** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
+
+**Update**: The analysis slowdown targeted by this plugin has been [fixed for MetaPC in the IDA 9.4 beta](https://docs.hex-rays.com/release-notes/9_4beta#performance)! The plugin will not be needed when analyzing x86/x64 binaries in IDA 9.4+.   
 
 Below represents where optimizations by IDA-FastAnalysis can currently be applied:
 
 
 | IDA Version | Supported targets |
 |-------------|-------------------|
-| 9.x         | x64, ARM64        |
-| 8.x         | x64               |
+| 9.2-9.3, Windows         | x64, ARM64        |
+| 9.2-9.3, Linux         | x64        |
+| 8.3         | x64               |
 
 ## TODO
 - [x] Support for Linux versions of IDA

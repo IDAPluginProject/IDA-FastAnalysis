@@ -1,17 +1,18 @@
 # IDA-FastAnalysis
 
-A (WIP) IDA **9.2-9.3, 8.3** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
+A (WIP) IDA **9.2-9.4, 8.3** plugin that speeds up the initial binary auto analysis through caching and multithreaded analysis.
 
-**Update**: The analysis slowdown targeted by this plugin has been [fixed for MetaPC in the IDA 9.4 beta](https://docs.hex-rays.com/release-notes/9_4beta#performance)! The plugin will not be needed when analyzing x86/x64 binaries in IDA 9.4+.   
+## Update: The analysis slowdown targeted by this plugin has been [fixed for MetaPC in the IDA 9.4 beta](https://docs.hex-rays.com/release-notes/9_4beta#performance)! The plugin will not be needed when analyzing x86/x64 binaries in IDA 9.4+.   
+However, FastAnalysis is still usable for ARM64 on this version. 
 
 Below represents where optimizations by IDA-FastAnalysis can currently be applied:
 
 
 | IDA Version | Supported targets |
 |-------------|-------------------|
-| 9.2-9.3, Windows         | x64, ARM64        |
-| 9.2-9.3, Linux         | x64        |
-| 8.3         | x64               |
+| 9.4, Windows/Linux         | ARM64        |
+| 9.2-9.3, Windows/Linux         | x64, ARM64        |
+| 8.3, Windows         | x64               |
 
 ## TODO
 - [x] Support for Linux versions of IDA
@@ -47,7 +48,7 @@ bool has_write_dref(ea_t target_addr) {
 }
 ```
 
-IDA-FastAnalysis overrides this functionality and instead creates a pre-computed set of all addresses that have a write xref to them, resulting in significantly faster analysis speeds (up to 200x faster during some of the most intensive analysis stages for x64 targets!)
+IDA-FastAnalysis overrides this functionality and instead initially creates a cache of all write xrefs, resulting in significantly faster analysis speeds (up to 200x faster during some of the most intensive analysis stages for x64 targets!)
 
 > [!WARNING]  
 > Due to how this optimization currently works, patching the binary while auto analysis is running can lead to corruption or inaccurate disassembly.
